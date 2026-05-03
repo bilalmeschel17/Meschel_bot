@@ -9,7 +9,7 @@ BOT_TOKEN = os.environ.get("TOKEN")  # Lu depuis la variable d'environnement Rai
 
 # Lien vers ton site de commande
 # ➡️ Mets ici l'URL de ton site une fois déployé sur GitHub Pages
-SITE_URL = "https://TON_USERNAME.github.io/puff-shop"
+SITE_URL = "https://bilalmeschel17.github.io/puff-shop/"
 
 # Ton pseudo Telegram pour le support
 SUPPORT = "@bilalmhl"  # ← Remplace par ton vrai pseudo si différent
