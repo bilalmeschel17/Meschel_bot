@@ -5,13 +5,14 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 # ============================================================
 # CONFIG — mets ton token ici après avoir créé le bot sur @BotFather
 # ============================================================
-BOT_TOKEN = "8596597955:AAEjXqZbF89J0dwMCP9ee8rF2u6RXvbch_I"
+BOT_TOKEN = os.environ.get("TOKEN")  # Lu depuis la variable d'environnement Railway
 
-# Lien vers ton site de commande (Vercel, GitHub Pages, etc.)
-SITE_URL = "https://TON-SITE.vercel.app"
+# Lien vers ton site de commande
+# ➡️ Mets ici l'URL de ton site une fois déployé sur GitHub Pages
+SITE_URL = "https://TON_USERNAME.github.io/puff-shop"
 
 # Ton pseudo Telegram pour le support
-SUPPORT = "@bilalmhl"
+SUPPORT = "@bilalmhl"  # ← Remplace par ton vrai pseudo si différent
 
 # ============================================================
 # /start — Message d'accueil
