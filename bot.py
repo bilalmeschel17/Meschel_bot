@@ -12,6 +12,9 @@ OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID", "")
 SITE_URL = "https://bilalmeschel17.github.io/puff-shop"
 SUPPORT = "bilalmhl"
 
+# Commandes confirmées en mémoire (order_num -> True)
+confirmed_orders = set()
+
 # ============================================================
 # COMMANDES BOT
 # ============================================================
@@ -157,14 +160,26 @@ async def handle_confirm_callback(update, context):
     try:
         parts = query.data.split("|")
         _, order_num, pseudo, city, pm_label, adresse, total = parts
-        items_text = "—"  # Pas stocké dans le callback, le client a déjà le détail
+        items_text = "—"
         await _send_confirmation_to_client(context.application, pseudo, order_num, city, pm_label, items_text, total, adresse)
+        # Marquer la commande comme confirmée
+        confirmed_orders.add(order_num)
         await query.edit_message_text(
             text=query.message.text + f"\n\n✅ *Confirmation envoyée au client* (@{pseudo})",
             parse_mode="Markdown"
         )
     except Exception as e:
         await query.edit_message_text(text=f"Erreur : {e}")
+
+
+async def handle_status(request):
+    """Endpoint appelé par le site pour vérifier si une commande est confirmée"""
+    try:
+        order_num = request.match_info.get("order_num", "")
+        confirmed = order_num in confirmed_orders
+        return web.json_response({"confirmed": confirmed}, headers={"Access-Control-Allow-Origin": "*"})
+    except Exception as e:
+        return web.json_response({"confirmed": False, "error": str(e)}, status=500)
 
 async def handle_health(request):
     return web.Response(text="OK")
@@ -185,6 +200,7 @@ def main():
     web_app["bot_app"] = app_bot
     web_app.router.add_post("/ticket", handle_ticket)
     web_app.router.add_get("/health", handle_health)
+    web_app.router.add_get("/status/{order_num}", handle_status)
 
     port = int(os.environ.get("PORT", 8080))
 
