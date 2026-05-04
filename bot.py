@@ -1,7 +1,7 @@
 import os
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from aiohttp import web
 import json
 
@@ -68,16 +68,17 @@ async def handle_ticket(request):
         items = data.get("items", [])
         total = data.get("total", "?")
         dispo = data.get("dispo", "")
+        needs_confirm = data.get("needs_confirm", False)  # PayPal/Virement = True
 
-        # Emojis par méthode
         pm_icons = {"paypal": "🅿️ PayPal", "virement": "🏦 Virement", "especes": "💵 Espèces"}
         pm_label = pm_icons.get(payment, payment)
-
-        # Construire le recap articles
         items_text = "\n".join([f"  • {i.get('name','')} — {i.get('flavor','')} ({i.get('price','')} €)" for i in items])
 
+        # Statut selon méthode
+        statut = "⏳ EN ATTENTE DE VÉRIFICATION" if needs_confirm else "✅ CONFIRMÉE"
+
         message = (
-            f"🎫 *NOUVELLE COMMANDE*\n"
+            f"🎫 *NOUVELLE COMMANDE — {statut}*\n"
             f"{'━'*30}\n\n"
             f"📋 *Référence :* `{order_num}`\n"
             f"📍 *Ville :* {city}\n"
@@ -88,50 +89,82 @@ async def handle_ticket(request):
             f"  • Telegram : {telegram}\n"
             f"  • Adresse : {adresse}\n"
         )
-
         if dispo:
             message += f"  • Disponibilités : {dispo}\n"
-
         message += f"\n{'━'*30}"
 
         bot_app = request.app["bot_app"]
+        client_pseudo = telegram.strip().lstrip("@")
 
-        # Envoyer au propriétaire
         if OWNER_CHAT_ID:
-            await bot_app.bot.send_message(
-                chat_id=OWNER_CHAT_ID,
-                text=message,
-                parse_mode="Markdown"
-            )
-
-        # Envoyer le récap au client via son pseudo Telegram
-        client_pseudo = data.get("telegram", "").strip().lstrip("@")
-        if client_pseudo:
-            client_message = (
-                f"✅ *Commande confirmée !*\n"
-                f"{'━'*28}\n\n"
-                f"📋 *Référence :* `{order_num}`\n"
-                f"📍 *Ville :* {city}\n"
-                f"💳 *Paiement :* {pm_label}\n\n"
-                f"🛒 *Votre commande :*\n{items_text}\n\n"
-                f"💰 *Total :* {total} €\n\n"
-                f"📬 *Livraison à :* {adresse}\n\n"
-                f"{'━'*28}\n"
-                f"_On vous contacte très prochainement pour organiser la livraison. Merci de votre confiance !_ 🙏"
-            )
-            try:
+            if needs_confirm:
+                # Bouton inline pour confirmer le paiement
+                keyboard = InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "✅ Confirmer le paiement",
+                        callback_data=f"confirm|{order_num}|{client_pseudo}|{city}|{pm_label}|{adresse}|{total}"
+                    )
+                ]])
                 await bot_app.bot.send_message(
-                    chat_id=f"@{client_pseudo}",
-                    text=client_message,
+                    chat_id=OWNER_CHAT_ID,
+                    text=message,
+                    parse_mode="Markdown",
+                    reply_markup=keyboard
+                )
+            else:
+                # Espèces : pas de vérif, on envoie direct sans bouton
+                await bot_app.bot.send_message(
+                    chat_id=OWNER_CHAT_ID,
+                    text=message,
                     parse_mode="Markdown"
                 )
-            except Exception as e:
-                print(f"Client message error: {e}")
+                # Notifier le client directement
+                if client_pseudo:
+                    await _send_confirmation_to_client(bot_app, client_pseudo, order_num, city, pm_label, items_text, total, adresse)
 
         return web.json_response({"ok": True})
     except Exception as e:
         print(f"Ticket error: {e}")
         return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def _send_confirmation_to_client(bot_app, pseudo, order_num, city, pm_label, items_text, total, adresse):
+    client_message = (
+        f"✅ *Commande confirmée !*\n"
+        f"{'━'*28}\n\n"
+        f"📋 *Référence :* `{order_num}`\n"
+        f"📍 *Ville :* {city}\n"
+        f"💳 *Paiement :* {pm_label}\n\n"
+        f"🛒 *Votre commande :*\n{items_text}\n\n"
+        f"💰 *Total :* {total} €\n\n"
+        f"📬 *Livraison à :* {adresse}\n\n"
+        f"{'━'*28}\n"
+        f"_On vous contacte très prochainement pour organiser la livraison. Merci de votre confiance !_ 🙏"
+    )
+    try:
+        await bot_app.bot.send_message(
+            chat_id=f"@{pseudo}",
+            text=client_message,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        print(f"Client message error: {e}")
+
+
+async def handle_confirm_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    try:
+        parts = query.data.split("|")
+        _, order_num, pseudo, city, pm_label, adresse, total = parts
+        items_text = "—"  # Pas stocké dans le callback, le client a déjà le détail
+        await _send_confirmation_to_client(context.application, pseudo, order_num, city, pm_label, items_text, total, adresse)
+        await query.edit_message_text(
+            text=query.message.text + f"\n\n✅ *Confirmation envoyée au client* (@{pseudo})",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await query.edit_message_text(text=f"Erreur : {e}")
 
 async def handle_health(request):
     return web.Response(text="OK")
@@ -145,6 +178,7 @@ def main():
     app_bot.add_handler(CommandHandler("produits", produits))
     app_bot.add_handler(CommandHandler("aide", aide))
     app_bot.add_handler(CommandHandler("monid", monid))
+    app_bot.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern=r"^confirm\|"))
 
     # Serveur web
     web_app = web.Application()
