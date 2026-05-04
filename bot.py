@@ -1,4 +1,3 @@
-
 import os
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -95,14 +94,39 @@ async def handle_ticket(request):
 
         message += f"\n{'━'*30}"
 
+        bot_app = request.app["bot_app"]
+
         # Envoyer au propriétaire
         if OWNER_CHAT_ID:
-            bot_app = request.app["bot_app"]
             await bot_app.bot.send_message(
                 chat_id=OWNER_CHAT_ID,
                 text=message,
                 parse_mode="Markdown"
             )
+
+        # Envoyer le récap au client via son pseudo Telegram
+        client_pseudo = data.get("telegram", "").strip().lstrip("@")
+        if client_pseudo:
+            client_message = (
+                f"✅ *Commande confirmée !*\n"
+                f"{'━'*28}\n\n"
+                f"📋 *Référence :* `{order_num}`\n"
+                f"📍 *Ville :* {city}\n"
+                f"💳 *Paiement :* {pm_label}\n\n"
+                f"🛒 *Votre commande :*\n{items_text}\n\n"
+                f"💰 *Total :* {total} €\n\n"
+                f"📬 *Livraison à :* {adresse}\n\n"
+                f"{'━'*28}\n"
+                f"_On vous contacte très prochainement pour organiser la livraison. Merci de votre confiance !_ 🙏"
+            )
+            try:
+                await bot_app.bot.send_message(
+                    chat_id=f"@{client_pseudo}",
+                    text=client_message,
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                print(f"Client message error: {e}")
 
         return web.json_response({"ok": True})
     except Exception as e:
