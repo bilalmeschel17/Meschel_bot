@@ -108,45 +108,42 @@ async def handle_ticket(request):
         order_num = data.get("order_num", "?")
         city = data.get("city", "?")
         payment = data.get("payment", "?")
-        telegram = data.get("telegram", "?")
         adresse = data.get("adresse", "?")
         items = data.get("items", [])
         total = data.get("total", "?")
         dispo = data.get("dispo", "")
-        needs_confirm = data.get("needs_confirm", False)  # PayPal/Virement = True
-
-        pm_icons = {"paypal": "🅿️ PayPal", "virement": "🏦 Virement", "especes": "💵 Espèces"}
-        pm_label = pm_icons.get(payment, payment)
-        items_text = "\n".join([f"  • {i.get('name','')} — {i.get('flavor','')} ({i.get('price','')} €)" for i in items])
-
-        # Statut selon méthode
-        statut = "⏳ EN ATTENTE DE VÉRIFICATION" if needs_confirm else "✅ CONFIRMÉE"
-
-        message = (
-            f"🎫 *NOUVELLE COMMANDE — {statut}*\n"
-            f"{'━'*30}\n\n"
-            f"📋 *Référence :* `{order_num}`\n"
-            f"📍 *Ville :* {city}\n"
-            f"💳 *Paiement :* {pm_label}\n\n"
-            f"🛒 *Commande :*\n{items_text}\n\n"
-            f"💰 *Total :* {total} €\n\n"
-            f"📬 *Livraison :*\n"
-            f"  • Telegram : {telegram}\n"
-            f"  • Adresse : {adresse}\n"
-        )
-        if dispo:
-            message += f"  • Disponibilités : {dispo}\n"
-        message += f"\n{'━'*30}"
-
-        bot_app = request.app["bot_app"]
+        needs_confirm = data.get("needs_confirm", False)
         telephone = data.get("telephone", "").strip().replace(" ", "").replace("-", "")
 
-        if OWNER_CHAT_ID:
+        pm_icons = {"paypal": "\U0001f17f\ufe0f PayPal", "virement": "\U0001f3e6 Virement", "especes": "\U0001f4b5 Esp\u00e8ces"}
+        pm_label = pm_icons.get(payment, payment)
+        items_text = "\n".join([f"  \u2022 {i.get('name','')} \u2014 {i.get('flavor','')} ({i.get('price','')} \u20ac)" for i in items])
+        statut = "\u23f3 EN ATTENTE DE V\u00c9RIFICATION" if needs_confirm else "\u2705 CONFIRM\u00c9E"
+
+        sep = "\u2501" * 30
+        message = (
+            f"\U0001f3ab *NOUVELLE COMMANDE \u2014 {statut}*\n"
+            f"{sep}\n\n"
+            f"\U0001f4cb *R\u00e9f\u00e9rence :* `{order_num}`\n"
+            f"\U0001f4cd *Ville :* {city}\n"
+            f"\U0001f4b3 *Paiement :* {pm_label}\n\n"
+            f"\U0001f6d2 *Commande :*\n{items_text}\n\n"
+            f"\U0001f4b0 *Total :* {total} \u20ac\n\n"
+            f"\U0001f4ec *Livraison :*\n"
+            f"  \u2022 T\u00e9l\u00e9phone : {telephone}\n"
+            f"  \u2022 Adresse : {adresse}\n"
+        )
+        if dispo:
+            message += f"  \u2022 Disponibilit\u00e9s : {dispo}\n"
+        message += f"\n{sep}"
+
+        bot_app = request.app["bot_app"]
+
+        try:
             if needs_confirm:
-                # Bouton inline pour confirmer le paiement
                 keyboard = InlineKeyboardMarkup([[
                     InlineKeyboardButton(
-                        "✅ Confirmer le paiement",
+                        "\u2705 Confirmer le paiement",
                         callback_data=f"confirm|{order_num}|{telephone}|{city}|{pm_label}|{adresse}|{total}"
                     )
                 ]])
@@ -156,17 +153,16 @@ async def handle_ticket(request):
                     parse_mode="Markdown",
                     reply_markup=keyboard
                 )
-                # Envoyer un ticket "en attente" au client dès la commande
                 await _send_pending_ticket_to_client(bot_app, telephone, order_num, city, pm_label, items_text, total, adresse)
             else:
-                # Espèces : pas de vérif, on envoie direct sans bouton
                 await bot_app.bot.send_message(
                     chat_id=OWNER_CHAT_ID,
                     text=message,
                     parse_mode="Markdown"
                 )
-                # Notifier le client directement
                 await _send_ticket_to_client(bot_app, telephone, order_num, city, pm_label, items_text, total, adresse)
+        except Exception as send_err:
+            print(f"Erreur envoi owner: {send_err}")
 
         return web.json_response({"ok": True})
     except Exception as e:
