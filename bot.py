@@ -1,7 +1,7 @@
 import os
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from aiohttp import web
 import json
 
@@ -15,23 +15,28 @@ SUPPORT = "bilalmhl"
 # Commandes confirmées en mémoire (order_num -> True)
 confirmed_orders = set()
 
+# Lien numéro de téléphone -> chat_id Telegram
+phone_to_chat_id = {}
+
 # ============================================================
 # COMMANDES BOT
 # ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from telegram import KeyboardButton, ReplyKeyboardMarkup
     prenom = update.effective_user.first_name or "frérot"
     texte = (
         f"Salut *{prenom}* 👊\n\n"
         "Bienvenue sur le shop 🛒\n\n"
         "🟣 *JNR 16K* — toutes les saveurs dispo\n"
         "🔴 *Razz Bar 60K* — toutes les saveurs dispo\n\n"
-        "Clique sur le bouton ci-dessous pour passer commande 👇"
+        "📱 *Partage ton numéro* pour recevoir ton ticket de commande directement ici 👇"
     )
-    keyboard = [
-        [InlineKeyboardButton("🛒 Passer commande", url=SITE_URL)],
-        [InlineKeyboardButton("💬 Support", url=f"https://t.me/{SUPPORT}")],
-    ]
-    await update.message.reply_text(texte, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    # Bouton pour partager le numéro
+    reply_kb = ReplyKeyboardMarkup(
+        [[KeyboardButton("📱 Partager mon numéro", request_contact=True)]],
+        resize_keyboard=True, one_time_keyboard=True
+    )
+    await update.message.reply_text(texte, parse_mode="Markdown", reply_markup=reply_kb)
 
 async def produits(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texte = (
@@ -60,6 +65,31 @@ async def aide(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============================================================
 # WEBHOOK HTTP — reçoit les tickets depuis le site
 # ============================================================
+
+
+async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
+    contact = update.message.contact
+    if contact:
+        # Normaliser le numéro (enlever +33, espaces, etc.)
+        phone = contact.phone_number.replace("+33", "0").replace(" ", "").replace("-", "")
+        chat_id = update.effective_user.id
+        phone_to_chat_id[phone] = chat_id
+        # Aussi stocker les variantes courantes du numéro
+        phone_to_chat_id[contact.phone_number] = chat_id
+        prenom = update.effective_user.first_name or "toi"
+        keyboard = [
+            [InlineKeyboardButton("🛒 Passer commande", url=SITE_URL)],
+            [InlineKeyboardButton("💬 Support", url=f"https://t.me/{SUPPORT}")],
+        ]
+        await update.message.reply_text(
+            f"✅ Parfait *{prenom}* ! Ton numéro est enregistré.\n\nTu recevras ton ticket de commande ici après chaque achat. Clique ci-dessous pour commander 👇",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        # Supprimer le clavier de partage
+        await update.message.reply_text(".", reply_markup=ReplyKeyboardRemove())
+
 async def handle_ticket(request):
     try:
         data = await request.json()
@@ -144,14 +174,22 @@ async def _send_confirmation_to_client(bot_app, pseudo, order_num, city, pm_labe
         f"{'━'*28}\n"
         f"_On vous contacte très prochainement pour organiser la livraison. Merci de votre confiance !_ 🙏"
     )
-    try:
-        await bot_app.bot.send_message(
-            chat_id=f"@{pseudo}",
-            text=client_message,
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        print(f"Client message error: {e}")
+    # pseudo = numéro de téléphone normalisé
+    client_chat_id = phone_to_chat_id.get(pseudo)
+    if not client_chat_id:
+        alt = "+33" + pseudo[1:] if pseudo.startswith("0") else pseudo
+        client_chat_id = phone_to_chat_id.get(alt)
+    if client_chat_id:
+        try:
+            await bot_app.bot.send_message(
+                chat_id=client_chat_id,
+                text=client_message,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print(f"Client message error: {e}")
+    else:
+        print(f"Numéro non trouvé pour envoi confirmation: {pseudo}")
 
 
 async def handle_confirm_callback(update, context):
@@ -194,6 +232,7 @@ def main():
     app_bot.add_handler(CommandHandler("aide", aide))
     app_bot.add_handler(CommandHandler("monid", monid))
     app_bot.add_handler(CallbackQueryHandler(handle_confirm_callback, pattern=r"^confirm\|"))
+    app_bot.add_handler(MessageHandler(filters.CONTACT, handle_contact))
 
     # Serveur web
     web_app = web.Application()
