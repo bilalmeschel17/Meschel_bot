@@ -18,37 +18,25 @@ confirmed_orders = set()
 # Lien numéro de téléphone -> chat_id Telegram
 phone_to_chat_id = {}
 
-# Tous les users qui ont fait /start : chat_id -> chat_id
-user_chat_ids = {}
-
-# Derniers utilisateurs actifs par ordre d'arrivée (pour matching commande)
-# telegram_username -> chat_id
-username_to_chat_id = {}
-
 # ============================================================
 # COMMANDES BOT
 # ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from telegram import KeyboardButton, ReplyKeyboardMarkup
     prenom = update.effective_user.first_name or "frérot"
-    chat_id = update.effective_user.id
-    # Stocker automatiquement le chat_id dès le /start
-    user_chat_ids[chat_id] = chat_id
-    username = update.effective_user.username
-    if username:
-        username_to_chat_id[username.lower()] = chat_id
-        username_to_chat_id["@" + username.lower()] = chat_id
     texte = (
         f"Salut *{prenom}* 👊\n\n"
         "Bienvenue sur le shop 🛒\n\n"
         "🟣 *JNR 16K* — toutes les saveurs dispo\n"
         "🔴 *Razz Bar 60K* — toutes les saveurs dispo\n\n"
-        "Clique sur le bouton ci-dessous pour passer commande 👇"
+        "📱 *Partage ton numéro* pour recevoir ton ticket de commande directement ici 👇"
     )
-    keyboard = [
-        [InlineKeyboardButton("🛒 Passer commande", url=SITE_URL)],
-        [InlineKeyboardButton("💬 Support", url=f"https://t.me/{SUPPORT}")],
-    ]
-    await update.message.reply_text(texte, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    # Bouton pour partager le numéro
+    reply_kb = ReplyKeyboardMarkup(
+        [[KeyboardButton("📱 Partager mon numéro", request_contact=True)]],
+        resize_keyboard=True, one_time_keyboard=True
+    )
+    await update.message.reply_text(texte, parse_mode="Markdown", reply_markup=reply_kb)
 
 async def produits(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texte = (
@@ -108,43 +96,46 @@ async def handle_ticket(request):
         order_num = data.get("order_num", "?")
         city = data.get("city", "?")
         payment = data.get("payment", "?")
+        telegram = data.get("telegram", "?")
         adresse = data.get("adresse", "?")
         items = data.get("items", [])
         total = data.get("total", "?")
         dispo = data.get("dispo", "")
-        needs_confirm = data.get("needs_confirm", False)
-        telephone = data.get("telephone", "").strip().replace(" ", "").replace("-", "")
+        needs_confirm = data.get("needs_confirm", False)  # PayPal/Virement = True
 
-        pm_icons = {"paypal": "\U0001f17f\ufe0f PayPal", "virement": "\U0001f3e6 Virement", "especes": "\U0001f4b5 Esp\u00e8ces"}
+        pm_icons = {"paypal": "🅿️ PayPal", "virement": "🏦 Virement", "especes": "💵 Espèces"}
         pm_label = pm_icons.get(payment, payment)
-        items_text = "\n".join([f"  \u2022 {i.get('name','')} \u2014 {i.get('flavor','')} ({i.get('price','')} \u20ac)" for i in items])
-        statut = "\u23f3 EN ATTENTE DE V\u00c9RIFICATION" if needs_confirm else "\u2705 CONFIRM\u00c9E"
+        items_text = "\n".join([f"  • {i.get('name','')} — {i.get('flavor','')} ({i.get('price','')} €)" for i in items])
 
-        sep = "\u2501" * 30
+        # Statut selon méthode
+        statut = "⏳ EN ATTENTE DE VÉRIFICATION" if needs_confirm else "✅ CONFIRMÉE"
+
         message = (
-            f"\U0001f3ab *NOUVELLE COMMANDE \u2014 {statut}*\n"
-            f"{sep}\n\n"
-            f"\U0001f4cb *R\u00e9f\u00e9rence :* `{order_num}`\n"
-            f"\U0001f4cd *Ville :* {city}\n"
-            f"\U0001f4b3 *Paiement :* {pm_label}\n\n"
-            f"\U0001f6d2 *Commande :*\n{items_text}\n\n"
-            f"\U0001f4b0 *Total :* {total} \u20ac\n\n"
-            f"\U0001f4ec *Livraison :*\n"
-            f"  \u2022 T\u00e9l\u00e9phone : {telephone}\n"
-            f"  \u2022 Adresse : {adresse}\n"
+            f"🎫 *NOUVELLE COMMANDE — {statut}*\n"
+            f"{'━'*30}\n\n"
+            f"📋 *Référence :* `{order_num}`\n"
+            f"📍 *Ville :* {city}\n"
+            f"💳 *Paiement :* {pm_label}\n\n"
+            f"🛒 *Commande :*\n{items_text}\n\n"
+            f"💰 *Total :* {total} €\n\n"
+            f"📬 *Livraison :*\n"
+            f"  • Telegram : {telegram}\n"
+            f"  • Adresse : {adresse}\n"
         )
         if dispo:
-            message += f"  \u2022 Disponibilit\u00e9s : {dispo}\n"
-        message += f"\n{sep}"
+            message += f"  • Disponibilités : {dispo}\n"
+        message += f"\n{'━'*30}"
 
         bot_app = request.app["bot_app"]
+        client_pseudo = telegram.strip().lstrip("@")
 
-        try:
+        if OWNER_CHAT_ID:
             if needs_confirm:
+                # Bouton inline pour confirmer le paiement
                 keyboard = InlineKeyboardMarkup([[
                     InlineKeyboardButton(
-                        "\u2705 Confirmer le paiement",
-                        callback_data=f"confirm|{order_num}|{telephone}|{city}|{pm_label}|{adresse}|{total}"
+                        "✅ Confirmer le paiement",
+                        callback_data=f"confirm|{order_num}|{client_pseudo}|{city}|{pm_label}|{adresse}|{total}"
                     )
                 ]])
                 await bot_app.bot.send_message(
@@ -153,16 +144,16 @@ async def handle_ticket(request):
                     parse_mode="Markdown",
                     reply_markup=keyboard
                 )
-                await _send_pending_ticket_to_client(bot_app, telephone, order_num, city, pm_label, items_text, total, adresse)
             else:
+                # Espèces : pas de vérif, on envoie direct sans bouton
                 await bot_app.bot.send_message(
                     chat_id=OWNER_CHAT_ID,
                     text=message,
                     parse_mode="Markdown"
                 )
-                await _send_ticket_to_client(bot_app, telephone, order_num, city, pm_label, items_text, total, adresse)
-        except Exception as send_err:
-            print(f"Erreur envoi owner: {send_err}")
+                # Notifier le client directement
+                if client_pseudo:
+                    await _send_confirmation_to_client(bot_app, client_pseudo, order_num, city, pm_label, items_text, total, adresse)
 
         return web.json_response({"ok": True})
     except Exception as e:
@@ -170,60 +161,34 @@ async def handle_ticket(request):
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
-async def _send_pending_ticket_to_client(bot_app, telephone, order_num, city, pm_label, items_text, total, adresse):
-    """Ticket en attente de confirmation envoyé au client dès la commande PayPal/Virement"""
-    client_message = (
-        f"⏳ *Commande reçue — en attente de confirmation*\n"
-        f"{'━'*28}\n\n"
-        f"📋 *Référence :* `{order_num}`\n"
-        f"📍 *Ville :* {city}\n"
-        f"💳 *Paiement :* {pm_label}\n\n"
-        f"🛒 *Ta commande :*\n{items_text}\n\n"
-        f"💰 *Total :* {total} €\n\n"
-        f"📬 *Livraison à :* {adresse}\n\n"
-        f"{'━'*28}\n"
-        f"_Dès que ton paiement est confirmé, tu recevras un message. Merci !_ 🙏"
-    )
-    client_chat_id = phone_to_chat_id.get(telephone)
-    if not client_chat_id:
-        alt = "+33" + telephone[1:] if telephone.startswith("0") else telephone
-        client_chat_id = phone_to_chat_id.get(alt)
-    if client_chat_id:
-        try:
-            await bot_app.bot.send_message(chat_id=client_chat_id, text=client_message, parse_mode="Markdown")
-        except Exception as e:
-            print(f"Erreur ticket pending client: {e}")
-
-async def _send_ticket_to_client(bot_app, telephone, order_num, city, pm_label, items_text, total, adresse):
-    """Envoie le ticket au client via son numéro de téléphone (stocké lors du /start via partage contact)"""
-    client_message = (
-        f"🎫 *Ton ticket de commande*\n"
-        f"{'━'*28}\n\n"
-        f"📋 *Référence :* `{order_num}`\n"
-        f"📍 *Ville :* {city}\n"
-        f"💳 *Paiement :* {pm_label}\n\n"
-        f"🛒 *Ta commande :*\n{items_text}\n\n"
-        f"💰 *Total :* {total} €\n\n"
-        f"📬 *Livraison à :* {adresse}\n\n"
-        f"{'━'*28}\n"
-        f"_On te contacte très prochainement pour organiser la livraison. Merci !_ 🙏"
-    )
-    # Chercher le chat_id via le numéro de téléphone
-    client_chat_id = phone_to_chat_id.get(telephone)
-    if not client_chat_id:
-        alt = "+33" + telephone[1:] if telephone.startswith("0") else "0" + telephone.lstrip("+33")
-        client_chat_id = phone_to_chat_id.get(alt)
-    if client_chat_id:
-        try:
-            await bot_app.bot.send_message(chat_id=client_chat_id, text=client_message, parse_mode="Markdown")
-            print(f"Ticket envoyé au client {telephone}")
-        except Exception as e:
-            print(f"Erreur envoi ticket client: {e}")
-    else:
-        print(f"Client introuvable pour numéro: {telephone} — il n'a peut-être pas fait /start et partagé son numéro")
-
 async def _send_confirmation_to_client(bot_app, pseudo, order_num, city, pm_label, items_text, total, adresse):
-    await _send_ticket_to_client(bot_app, pseudo, order_num, city, pm_label, items_text, total, adresse)
+    sep = "━" * 28
+    client_message = (
+        f"🎉 *Ta commande {order_num} est prête !*\n\n"
+        f"Clique sur le bouton ci-dessous pour la consulter."
+    )
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            "📦 Voir ma commande",
+            url=f"{SITE_URL}#commandes"
+        )
+    ]])
+    client_chat_id = phone_to_chat_id.get(pseudo)
+    if not client_chat_id:
+        alt = "+33" + pseudo[1:] if pseudo.startswith("0") else pseudo
+        client_chat_id = phone_to_chat_id.get(alt)
+    if client_chat_id:
+        try:
+            await bot_app.bot.send_message(
+                chat_id=client_chat_id,
+                text=client_message,
+                parse_mode="Markdown",
+                reply_markup=keyboard
+            )
+        except Exception as e:
+            print(f"Client message error: {e}")
+    else:
+        print(f"Numéro non trouvé pour envoi confirmation: {pseudo}")
 
 
 async def handle_confirm_callback(update, context):
@@ -231,9 +196,9 @@ async def handle_confirm_callback(update, context):
     await query.answer()
     try:
         parts = query.data.split("|")
-        _, order_num, telephone, city, pm_label, adresse, total = parts
+        _, order_num, pseudo, city, pm_label, adresse, total = parts
         items_text = "—"
-        await _send_ticket_to_client(context.application, telephone, order_num, city, pm_label, items_text, total, adresse)
+        await _send_confirmation_to_client(context.application, pseudo, order_num, city, pm_label, items_text, total, adresse)
         # Marquer la commande comme confirmée
         confirmed_orders.add(order_num)
         await query.edit_message_text(
