@@ -22,21 +22,19 @@ phone_to_chat_id = {}
 # COMMANDES BOT
 # ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from telegram import KeyboardButton, ReplyKeyboardMarkup
     prenom = update.effective_user.first_name or "frérot"
     texte = (
         f"Salut *{prenom}* 👊\n\n"
         "Bienvenue sur le shop 🛒\n\n"
         "🟣 *JNR 16K* — toutes les saveurs dispo\n"
         "🔴 *Razz Bar 60K* — toutes les saveurs dispo\n\n"
-        "📱 *Partage ton numéro* pour recevoir ton ticket de commande directement ici 👇"
+        "Clique sur le bouton ci-dessous pour passer commande 👇"
     )
-    # Bouton pour partager le numéro
-    reply_kb = ReplyKeyboardMarkup(
-        [[KeyboardButton("📱 Partager mon numéro", request_contact=True)]],
-        resize_keyboard=True, one_time_keyboard=True
-    )
-    await update.message.reply_text(texte, parse_mode="Markdown", reply_markup=reply_kb)
+    keyboard = [
+        [InlineKeyboardButton("🛒 Passer commande", url=SITE_URL)],
+        [InlineKeyboardButton("💬 Support", url=f"https://t.me/{SUPPORT}")],
+    ]
+    await update.message.reply_text(texte, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def produits(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texte = (
